@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allowlist: only these emails can read/write any data.
+    function isAllowed() {
+      return request.auth != null &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email.lower() in [
+          'philip.owens@hotmail.co.uk',
+          'j.jade.owens@gmail.com'
+        ];
+    }
+
+    match /members/{id}    { allow read, write: if isAllowed(); }
+    match /activities/{id} { allow read, write: if isAllowed(); }
+    match /payments/{id}   { allow read, write: if isAllowed(); }
+  }
+}
