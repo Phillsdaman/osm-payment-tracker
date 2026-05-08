@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS members (
     role TEXT NOT NULL DEFAULT 'child',          -- 'child' | 'leader'
     email TEXT,
     track_payments INTEGER NOT NULL DEFAULT 1,   -- 0 | 1
-    osm_member_id TEXT,                           -- OSM scoutid, for sync
+    osm_member_id TEXT,                           -- OSM member_id (parent-portal)
+    osm_section_id TEXT,                          -- OSM section_id this member belongs to
     notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -114,6 +115,12 @@ def connect():
 def init_db() -> None:
     with connect() as c:
         c.executescript(SCHEMA)
+        # Lightweight migrations for existing databases
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(members)").fetchall()}
+        if "osm_section_id" not in cols:
+            c.execute("ALTER TABLE members ADD COLUMN osm_section_id TEXT")
+        if "osm_member_id" not in cols:
+            c.execute("ALTER TABLE members ADD COLUMN osm_member_id TEXT")
     seed_if_empty()
 
 
@@ -157,12 +164,15 @@ def upsert_member(data: dict) -> dict:
     with connect() as c:
         if data.get("id"):
             c.execute(
-                "UPDATE members SET name=?, role=?, email=?, track_payments=?, notes=?, updated_at=? WHERE id=?",
+                "UPDATE members SET name=?, role=?, email=?, track_payments=?, "
+                "osm_section_id=?, osm_member_id=?, notes=?, updated_at=? WHERE id=?",
                 (
                     data["name"],
                     data.get("role", "child"),
                     data.get("email"),
                     1 if data.get("track_payments") else 0,
+                    str(data["osm_section_id"]) if data.get("osm_section_id") else None,
+                    str(data["osm_member_id"]) if data.get("osm_member_id") else None,
                     data.get("notes"),
                     ts,
                     data["id"],
@@ -172,14 +182,16 @@ def upsert_member(data: dict) -> dict:
         else:
             mid = new_id()
             c.execute(
-                "INSERT INTO members (id,name,role,email,track_payments,notes,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO members (id,name,role,email,track_payments,osm_section_id,osm_member_id,notes,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     mid,
                     data["name"],
                     data.get("role", "child"),
                     data.get("email"),
                     1 if data.get("track_payments") else 0,
+                    str(data["osm_section_id"]) if data.get("osm_section_id") else None,
+                    str(data["osm_member_id"]) if data.get("osm_member_id") else None,
                     data.get("notes"),
                     ts,
                     ts,

@@ -1,18 +1,15 @@
-"""Online Scout Manager client.
+"""Online Scout Manager client (parent-portal API).
 
 Cookie-session mode for use while waiting for official OAuth access.
 Designed so that swapping to OAuth later only changes the auth class.
 
-Usage:
-    auth = OSMCookieAuth(phpsessid="...", extra_cookies={...})
-    client = OSMClient(auth)
-    schedules = client.get_payment_schedules(section_id=12345)
+Discovered endpoints (parent portal — what you see when logged in as a parent):
+    GET  /ext/mymember/payments/?action=getDetails&section_id=X&member_id=Y
+    GET  /ext/mymember/events/?action=getDetails&section_id=X&member_id=Y
+    GET  /ext/mymember/?action=track
+    GET  /ext/users/auth/?action=ping&user_id=X
 
-Reference: OSM uses an undocumented REST API:
-    POST https://www.onlinescoutmanager.co.uk/ext/{module}/?action={action}
-    Content-Type: application/x-www-form-urlencoded
-
-NOTE: OSM blocks JSON request bodies. All POSTs must be form-encoded.
+Each request needs cookies copied from a logged-in browser session.
 """
 from __future__ import annotations
 
@@ -47,12 +44,10 @@ class OSMCookieAuth:
     """Browser-session authentication.
 
     Two ways to populate this:
-      1) cookie_header: paste the entire 'Cookie:' request header string from
-         DevTools → Network → any OSM request → Request Headers → Cookie.
-         This is the recommended approach — works regardless of which cookies
-         OSM is using on a given day.
-      2) phpsessid + extra_cookies: legacy individual cookie names, kept for
-         backwards compat.
+      1) cookie_header: paste the entire 'Cookie:' request header from
+         DevTools → Network → any OSM request. Recommended — works regardless
+         of which cookies OSM uses on a given day.
+      2) phpsessid + extra_cookies: legacy individual cookie names.
     """
     cookie_header: str | None = None
     phpsessid: str | None = None
@@ -82,11 +77,7 @@ class OSMCookieAuth:
 
 @dataclass
 class OSMOAuthAuth:
-    """Placeholder for the official OAuth flow we'll switch to once granted.
-
-    When OSM approves the developer account, only this class needs filling in
-    and OSMClient.__init__ stays the same.
-    """
+    """Placeholder for the official OAuth flow we'll switch to once granted."""
     access_token: str
 
     def apply(self, session: requests.Session) -> None:
@@ -96,10 +87,7 @@ class OSMOAuthAuth:
 # ───────── Client ─────────
 
 class OSMClient:
-    """Thin wrapper around OSM's undocumented REST endpoints.
-
-    All POSTs are form-encoded — sending JSON gets the script blocked.
-    """
+    """Thin wrapper around OSM's parent-portal endpoints."""
 
     def __init__(self, auth: OSMCookieAuth | OSMOAuthAuth, *, timeout: float = 20.0):
         self.auth = auth
@@ -119,29 +107,27 @@ class OSMClient:
 
     # ───── core HTTP ─────
 
-    def _post(self, module: str, action: str, payload: dict[str, Any]) -> Any:
-        url = f"{BASE}/ext/{module}/?action={action}"
-        body = urlencode({k: ("" if v is None else v) for k, v in payload.items()})
-        log.debug("POST %s body=%s", url, body[:200])
-        resp = self.session.post(
-            url,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=self.timeout,
-        )
+    def _get(self, path: str, params: dict[str, Any]) -> Any:
+        url = f"{BASE}{path}"
+        log.debug("GET %s params=%s", url, params)
+        resp = self.session.get(url, params=params, timeout=self.timeout)
         if resp.status_code in (401, 403):
             raise OSMAuthError(
-                f"OSM rejected the request ({resp.status_code}). Cookies likely expired — "
-                "re-grab PHPSESSID from your browser and update the .env."
+                f"OSM rejected the request ({resp.status_code}). Session likely expired — "
+                "re-grab the Cookie header from your browser and update Settings."
+            )
+        # OSM returns 404 with an HTML page for wrong endpoints
+        ct = resp.headers.get("Content-Type", "")
+        if "text/html" in ct:
+            raise OSMRequestError(
+                f"OSM returned HTML (status {resp.status_code}) — endpoint may be wrong "
+                "or your session was redirected to login. URL: {url}"
             )
         if resp.status_code >= 400:
             raise OSMRequestError(f"OSM HTTP {resp.status_code}: {resp.text[:300]}")
-        # OSM sometimes returns "false" or HTML when session is invalid
         text = resp.text.strip()
         if text in ("false", "", "null"):
-            raise OSMAuthError(
-                "OSM returned an empty/false response — session almost certainly expired."
-            )
+            raise OSMAuthError("OSM returned empty/false — session almost certainly expired.")
         try:
             return resp.json()
         except ValueError as e:
@@ -149,99 +135,62 @@ class OSMClient:
 
     # ───── endpoints ─────
 
-    def get_payment_schedules(self, section_id: int, term_id: int | None = None) -> list[dict]:
-        """ext/attendance/?action=getListOfGCPaymentSchedules
+    def get_member_payments(self, section_id: str | int, member_id: str | int) -> Any:
+        """GET /ext/mymember/payments/?action=getDetails
 
-        Returns the list of payment schedules (subs, camp deposits, kit etc.)
-        for the section. Typically returns a list of dicts; some OSM accounts
-        wrap it as {"items": [...]}, so we normalise.
+        Returns the full payment details for one member in one section
+        (parent-portal view — what you see for your own kids).
+        Response shape varies; we return the raw JSON.
         """
-        payload = {"sectionid": section_id}
-        if term_id is not None:
-            payload["termid"] = term_id
-        result = self._post("attendance", "getListOfGCPaymentSchedules", payload)
-        if isinstance(result, dict) and "items" in result:
-            return result["items"]
-        if isinstance(result, list):
-            return result
-        return []
+        return self._get(
+            "/ext/mymember/payments/",
+            {"action": "getDetails", "section_id": section_id, "member_id": member_id},
+        )
 
-    def get_payments(self, section_id: int, schedule_id: int | None = None, term_id: int | None = None) -> list[dict]:
-        """ext/payments/?action=getPayments
+    def get_member_events(self, section_id: str | int, member_id: str | int) -> Any:
+        """GET /ext/mymember/events/?action=getDetails
 
-        Returns individual payment line items. If a schedule_id is given,
-        scopes the query to that schedule.
+        Returns events/activities the member is signed up for.
         """
-        payload = {"sectionid": section_id}
-        if schedule_id is not None:
-            payload["scheduleid"] = schedule_id
-        if term_id is not None:
-            payload["termid"] = term_id
-        result = self._post("payments", "getPayments", payload)
-        if isinstance(result, dict) and "items" in result:
-            return result["items"]
-        if isinstance(result, list):
-            return result
-        return []
+        return self._get(
+            "/ext/mymember/events/",
+            {"action": "getDetails", "section_id": section_id, "member_id": member_id},
+        )
 
-    def get_section_members(self, section_id: int, term_id: int | None = None) -> list[dict]:
-        """ext/members/?action=getListOfMembers — handy for matching scoutid → name."""
-        payload = {"sectionid": section_id}
-        if term_id is not None:
-            payload["termid"] = term_id
-        result = self._post("members", "getListOfMembers", payload)
-        if isinstance(result, dict) and "items" in result:
-            return result["items"]
-        if isinstance(result, list):
-            return result
-        return []
+    def ping(self, user_id: str | int | None = None) -> Any:
+        """Cheap liveness check for cookie validity."""
+        params = {"action": "ping"}
+        if user_id is not None:
+            params["user_id"] = user_id
+        return self._get("/ext/users/auth/", params)
 
 
 # ───────── Sync orchestration ─────────
 
-def build_master_schedule(
+def fetch_for_members(
     client: OSMClient,
-    section_ids: list[int],
-    name_filter: list[str] | None = None,
-) -> list[dict]:
-    """Fetch payment schedules + payments across one or more sections, merge into
-    a single list sorted by due date.
+    members: list[dict],
+) -> dict[str, dict]:
+    """For each member with osm_section_id + osm_member_id set, fetch payments
+    and events. Returns dict keyed by local member id with raw OSM responses.
 
-    name_filter: case-insensitive substring match on member name.
-                 e.g. ["leo", "max", "lisa"] limits to your kids.
+    Errors per-member are caught and reported in the output, so one bad member
+    doesn't blow up the whole sync.
     """
-    nf = [n.lower() for n in (name_filter or [])]
-    rows: list[dict] = []
-    for sid in section_ids:
+    out: dict[str, dict] = {}
+    for m in members:
+        sid = m.get("osm_section_id")
+        mid = m.get("osm_member_id")
+        if not sid or not mid:
+            continue
+        entry: dict[str, Any] = {"member_name": m.get("name"), "section_id": sid, "member_id": mid}
         try:
-            schedules = client.get_payment_schedules(sid)
-        except OSMAuthError:
-            raise
-        for sch in schedules:
-            schedule_id = sch.get("scheduleid") or sch.get("id")
-            try:
-                payments = client.get_payments(sid, schedule_id=schedule_id)
-            except OSMRequestError as e:
-                log.warning("skipping schedule %s: %s", schedule_id, e)
-                continue
-            for p in payments:
-                name = (p.get("firstname", "") + " " + p.get("lastname", "")).strip().lower()
-                if nf and not any(n in name for n in nf):
-                    continue
-                rows.append(
-                    {
-                        "section_id": sid,
-                        "schedule_id": schedule_id,
-                        "schedule_name": sch.get("name") or sch.get("schedule_name"),
-                        "member_name": (p.get("firstname", "") + " " + p.get("lastname", "")).strip(),
-                        "scoutid": p.get("scoutid"),
-                        "amount_due": float(p.get("amount") or p.get("amountdue") or 0),
-                        "amount_paid": float(p.get("paid") or p.get("amountpaid") or 0),
-                        "due_date": p.get("duedate") or sch.get("duedate"),
-                        "status": p.get("status"),
-                        "osm_payment_id": p.get("paymentid") or p.get("id"),
-                        "raw": p,
-                    }
-                )
-    rows.sort(key=lambda r: r.get("due_date") or "9999-99-99")
-    return rows
+            entry["payments"] = client.get_member_payments(sid, mid)
+        except (OSMAuthError, OSMRequestError) as e:
+            entry["payments_error"] = str(e)
+        try:
+            entry["events"] = client.get_member_events(sid, mid)
+        except (OSMAuthError, OSMRequestError) as e:
+            entry["events_error"] = str(e)
+        out[m["id"]] = entry
+    return out

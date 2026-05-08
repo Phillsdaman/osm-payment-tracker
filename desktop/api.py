@@ -186,28 +186,32 @@ class Handler(BaseHTTPRequestHandler):
 
         # /api/osm/sync
         if path == "/api/osm/sync" and method == "POST":
-            body = _read_json(self)
             cookie_header = (db.get_setting("osm_cookie_header") or "").strip()
             phpsessid = (db.get_setting("osm_phpsessid") or "").strip()
             extra_raw = db.get_setting("osm_extra_cookies") or {}
             if not (cookie_header or phpsessid):
-                return _json_response(self, 400, {"error": "No OSM cookies saved. Set them in Settings first."})
+                return _json_response(self, 400, {"error": "No OSM cookies saved. Paste your Cookie header in Settings first."})
+            members = [m for m in db.list_members() if m.get("osm_section_id") and m.get("osm_member_id")]
+            if not members:
+                return _json_response(
+                    self,
+                    400,
+                    {"error": "No members have OSM IDs set. Edit each child in Members and add their OSM Section ID + Member ID."},
+                )
             try:
                 client = osm.OSMClient(osm.OSMCookieAuth(
                     cookie_header=cookie_header or None,
                     phpsessid=phpsessid or None,
                     extra_cookies=extra_raw,
                 ))
-                rows = osm.build_master_schedule(
-                    client,
-                    section_ids=body.get("section_ids") or [],
-                    name_filter=body.get("name_filter") or None,
-                )
+                results = osm.fetch_for_members(client, members)
             except osm.OSMAuthError as e:
                 return _json_response(self, 401, {"error": str(e)})
-            # TODO: upsert rows into db.payments using osm_id for dedupe.
-            # For now we just return them so Philip can verify the auth flow.
-            return _json_response(self, 200, {"ok": True, "rows": rows, "count": len(rows)})
+            return _json_response(
+                self,
+                200,
+                {"ok": True, "members_synced": len(results), "results": results},
+            )
 
         return self.send_error(404)
 

@@ -299,6 +299,20 @@ function memberForm(existing = {}) {
         <input name="track_payments" type="checkbox" ${m.track_payments ? "checked" : ""} class="rounded" />
         <span class="text-sm">Track payments for this member</span>
       </label>
+      <fieldset class="border border-slate-200 rounded-lg p-3 space-y-2">
+        <legend class="text-xs font-semibold text-slate-500 px-1">OSM sync (optional)</legend>
+        <p class="text-xs text-slate-500">Set both to pull this child's payments from OSM. Find them in the URL of the OSM payment page, e.g. <span class="font-mono">section_id=59827&amp;member_id=2058960</span>.</p>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="block">
+            <span class="text-xs font-medium">OSM Section ID</span>
+            <input name="osm_section_id" value="${escapeHtml(m.osm_section_id || "")}" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-sm" placeholder="e.g. 59827" />
+          </label>
+          <label class="block">
+            <span class="text-xs font-medium">OSM Member ID</span>
+            <input name="osm_member_id" value="${escapeHtml(m.osm_member_id || "")}" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-sm" placeholder="e.g. 2058960" />
+          </label>
+        </div>
+      </fieldset>
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" id="form-cancel" class="px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 text-sm">Cancel</button>
         <button type="submit" class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Save</button>
@@ -455,6 +469,8 @@ function attachMemberFormHandlers(id = null) {
       role: fd.get("role"),
       email: fd.get("email").trim() || null,
       track_payments: fd.get("track_payments") === "on",
+      osm_section_id: fd.get("osm_section_id").trim() || null,
+      osm_member_id: fd.get("osm_member_id").trim() || null,
     };
     try {
       await apiFetch("/members", { method: "POST", body: JSON.stringify(data) });
@@ -629,34 +645,23 @@ $("#import-file").addEventListener("change", async (e) => {
 // ───── settings ─────
 async function loadSettingsForm() {
   try {
-    const [cookieHeader, sectionIds, nameFilter] = await Promise.all([
-      apiFetch("/settings/osm_cookie_header"),
-      apiFetch("/settings/osm_section_ids"),
-      apiFetch("/settings/osm_name_filter"),
-    ]);
+    const cookieHeader = await apiFetch("/settings/osm_cookie_header");
     $("#setting-cookie-header").value = cookieHeader.value || "";
-    $("#setting-section-ids").value = (sectionIds.value || []).join(", ");
-    $("#setting-name-filter").value = (nameFilter.value || []).join(", ");
   } catch (e) {
     /* fine on first load */
   }
 }
 
+async function saveOsmSettings() {
+  await apiFetch("/settings/osm_cookie_header", {
+    method: "PUT",
+    body: JSON.stringify({ value: $("#setting-cookie-header").value.trim() }),
+  });
+}
+
 $("#save-osm-settings").addEventListener("click", async () => {
-  const sectionIds = $("#setting-section-ids").value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map(Number)
-    .filter((n) => Number.isFinite(n));
-  const nameFilter = $("#setting-name-filter").value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
   try {
-    await apiFetch("/settings/osm_cookie_header", { method: "PUT", body: JSON.stringify({ value: $("#setting-cookie-header").value.trim() }) });
-    await apiFetch("/settings/osm_section_ids", { method: "PUT", body: JSON.stringify({ value: sectionIds }) });
-    await apiFetch("/settings/osm_name_filter", { method: "PUT", body: JSON.stringify({ value: nameFilter }) });
+    await saveOsmSettings();
     toast("Saved", "success");
   } catch (e) {
     toast(e.message, "error");
@@ -664,32 +669,27 @@ $("#save-osm-settings").addEventListener("click", async () => {
 });
 
 async function runOsmSync() {
-  const sectionIdsRaw = await apiFetch("/settings/osm_section_ids");
-  const nameFilterRaw = await apiFetch("/settings/osm_name_filter");
-  const sectionIds = sectionIdsRaw.value || [];
-  const nameFilter = nameFilterRaw.value || [];
-  if (!sectionIds.length) {
-    toast("Add at least one Section ID in Settings first.", "error");
-    showTab("settings");
+  const linked = state.members.filter((m) => m.osm_section_id && m.osm_member_id);
+  if (!linked.length) {
+    toast("Add OSM Section + Member ID to at least one child on the Members page first.", "error");
+    showTab("members");
     return null;
   }
-  return apiFetch("/osm/sync", {
-    method: "POST",
-    body: JSON.stringify({ section_ids: sectionIds, name_filter: nameFilter }),
-  });
+  return apiFetch("/osm/sync", { method: "POST", body: JSON.stringify({}) });
 }
 
 $("#test-osm-sync").addEventListener("click", async () => {
   const out = $("#osm-test-output");
   out.classList.remove("hidden");
-  out.textContent = "Syncing…";
+  out.textContent = "Saving + syncing…";
   try {
+    await saveOsmSettings();
     const result = await runOsmSync();
     if (!result) {
       out.classList.add("hidden");
       return;
     }
-    out.textContent = `Got ${result.count} payment row(s):\n\n` + JSON.stringify(result.rows, null, 2);
+    out.textContent = JSON.stringify(result, null, 2);
   } catch (e) {
     out.textContent = "❌ " + e.message;
   }
@@ -702,9 +702,9 @@ $("#sync-btn").addEventListener("click", async () => {
     const result = await runOsmSync();
     if (result) {
       const ts = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      $("#last-sync").textContent = `Last sync: ${ts} · ${result.count} row(s)`;
+      $("#last-sync").textContent = `Last sync: ${ts} · ${result.members_synced} member(s)`;
       $("#last-sync").classList.remove("hidden");
-      toast(`OSM sync OK — ${result.count} payment(s) fetched`, "success");
+      toast(`OSM sync OK — ${result.members_synced} member(s) fetched`, "success");
       await refreshAll();
     }
   } catch (e) {
