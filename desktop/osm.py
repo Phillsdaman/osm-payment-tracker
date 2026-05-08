@@ -46,16 +46,37 @@ class OSMRequestError(Exception):
 class OSMCookieAuth:
     """Browser-session authentication.
 
-    Grab cookies from DevTools → Application → Cookies → onlinescoutmanager.co.uk
-    after signing in. PHPSESSID is the only one strictly required, but pass any
-    others (osm_user, secure_token, etc.) via extra_cookies for resilience.
+    Two ways to populate this:
+      1) cookie_header: paste the entire 'Cookie:' request header string from
+         DevTools → Network → any OSM request → Request Headers → Cookie.
+         This is the recommended approach — works regardless of which cookies
+         OSM is using on a given day.
+      2) phpsessid + extra_cookies: legacy individual cookie names, kept for
+         backwards compat.
     """
-    phpsessid: str
+    cookie_header: str | None = None
+    phpsessid: str | None = None
     extra_cookies: dict[str, str] = field(default_factory=dict)
 
-    def apply(self, session: requests.Session) -> None:
-        session.cookies.set("PHPSESSID", self.phpsessid, domain="www.onlinescoutmanager.co.uk")
+    def _parsed_cookies(self) -> dict[str, str]:
+        cookies: dict[str, str] = {}
+        if self.cookie_header:
+            for chunk in self.cookie_header.split(";"):
+                if "=" not in chunk:
+                    continue
+                k, v = chunk.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+                if k:
+                    cookies[k] = v
+        if self.phpsessid:
+            cookies.setdefault("PHPSESSID", self.phpsessid)
         for k, v in self.extra_cookies.items():
+            cookies[k] = v
+        return cookies
+
+    def apply(self, session: requests.Session) -> None:
+        for k, v in self._parsed_cookies().items():
             session.cookies.set(k, v, domain="www.onlinescoutmanager.co.uk")
 
 

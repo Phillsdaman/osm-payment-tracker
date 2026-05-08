@@ -187,12 +187,17 @@ class Handler(BaseHTTPRequestHandler):
         # /api/osm/sync
         if path == "/api/osm/sync" and method == "POST":
             body = _read_json(self)
+            cookie_header = (db.get_setting("osm_cookie_header") or "").strip()
             phpsessid = (db.get_setting("osm_phpsessid") or "").strip()
             extra_raw = db.get_setting("osm_extra_cookies") or {}
-            if not phpsessid:
-                return _json_response(self, 400, {"error": "No PHPSESSID saved. Set it in Settings first."})
+            if not (cookie_header or phpsessid):
+                return _json_response(self, 400, {"error": "No OSM cookies saved. Set them in Settings first."})
             try:
-                client = osm.OSMClient(osm.OSMCookieAuth(phpsessid=phpsessid, extra_cookies=extra_raw))
+                client = osm.OSMClient(osm.OSMCookieAuth(
+                    cookie_header=cookie_header or None,
+                    phpsessid=phpsessid or None,
+                    extra_cookies=extra_raw,
+                ))
                 rows = osm.build_master_schedule(
                     client,
                     section_ids=body.get("section_ids") or [],

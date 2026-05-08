@@ -142,28 +142,33 @@
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 space-y-3">
         <h3 class="font-semibold">Online Scout Manager — temporary cookie auth</h3>
-        <p class="text-sm text-slate-600">
-          Until your OSM developer OAuth access is approved, paste a session cookie copied from your logged-in browser.
-          In Chrome on osm: <span class="font-mono text-xs bg-slate-100 px-1 rounded">F12 → Application → Cookies → www.onlinescoutmanager.co.uk → PHPSESSID</span>.
-          Cookies typically expire after a few hours — re-paste when sync starts failing.
-        </p>
+        <details class="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <summary class="cursor-pointer font-medium text-slate-800">📋 How to grab your OSM cookies (click to expand)</summary>
+          <ol class="list-decimal ml-5 mt-2 space-y-1">
+            <li>Sign into <span class="font-mono text-xs bg-white px-1 rounded">www.onlinescoutmanager.co.uk</span> in Chrome.</li>
+            <li>Press <kbd class="font-mono text-xs bg-white px-1 rounded border">F12</kbd> to open DevTools.</li>
+            <li>Click the <strong>Network</strong> tab.</li>
+            <li>In OSM, click any section or page — requests will appear in DevTools.</li>
+            <li>In the Network panel, type <span class="font-mono text-xs bg-white px-1 rounded">ext/</span> in the filter bar to find an API request, then click any matching row.</li>
+            <li>In the right pane: <strong>Headers</strong> → scroll to <strong>Request Headers</strong> → find the line starting with <span class="font-mono text-xs bg-white px-1 rounded">Cookie:</span></li>
+            <li>Right-click the value → <strong>Copy value</strong>, then paste below.</li>
+          </ol>
+          <p class="mt-2 text-xs">Cookies usually expire after a few hours. Re-paste when sync starts failing with "session expired".</p>
+        </details>
         <label class="block">
-          <span class="text-sm font-medium">PHPSESSID</span>
-          <input id="setting-phpsessid" type="password" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs" placeholder="paste cookie value" />
+          <span class="text-sm font-medium">Cookie header <span class="text-red-600">*</span></span>
+          <textarea id="setting-cookie-header" rows="3" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs" placeholder="cf_clearance=...; osm_login=...; PHPSESSID=...; etc."></textarea>
+          <span class="text-xs text-slate-500">Paste the entire Cookie: header value (one long string of name=value pairs separated by semicolons).</span>
         </label>
         <label class="block">
           <span class="text-sm font-medium">Section IDs <span class="text-slate-400 font-normal">(comma-separated)</span></span>
           <input id="setting-section-ids" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2" placeholder="e.g. 12345, 67890" />
-          <span class="text-xs text-slate-500">Find these in OSM's URL after picking a section. One per section you lead/your kids are in.</span>
+          <span class="text-xs text-slate-500">Find these in OSM's URL after picking a section, or in the request payload of any OSM API call.</span>
         </label>
         <label class="block">
           <span class="text-sm font-medium">Name filter <span class="text-slate-400 font-normal">(optional)</span></span>
           <input id="setting-name-filter" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2" placeholder="leo, max, lisa" />
-          <span class="text-xs text-slate-500">Limit sync to specific kids by case-insensitive substring match. Blank = everyone in your section(s).</span>
-        </label>
-        <label class="block">
-          <span class="text-sm font-medium">Extra cookies <span class="text-slate-400 font-normal">(optional, JSON)</span></span>
-          <textarea id="setting-extra-cookies" rows="2" class="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs" placeholder='{"osm_user": "...", "secure_token": "..."}'></textarea>
+          <span class="text-xs text-slate-500">Limit sync to specific kids by case-insensitive substring. Blank = everyone in your section(s).</span>
         </label>
         <div class="flex gap-2">
           <button id="save-osm-settings" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-3 py-2 rounded-lg">Save</button>

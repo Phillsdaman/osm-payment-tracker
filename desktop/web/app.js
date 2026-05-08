@@ -629,16 +629,14 @@ $("#import-file").addEventListener("change", async (e) => {
 // ───── settings ─────
 async function loadSettingsForm() {
   try {
-    const [phps, sectionIds, nameFilter, extra] = await Promise.all([
-      apiFetch("/settings/osm_phpsessid"),
+    const [cookieHeader, sectionIds, nameFilter] = await Promise.all([
+      apiFetch("/settings/osm_cookie_header"),
       apiFetch("/settings/osm_section_ids"),
       apiFetch("/settings/osm_name_filter"),
-      apiFetch("/settings/osm_extra_cookies"),
     ]);
-    $("#setting-phpsessid").value = phps.value || "";
+    $("#setting-cookie-header").value = cookieHeader.value || "";
     $("#setting-section-ids").value = (sectionIds.value || []).join(", ");
     $("#setting-name-filter").value = (nameFilter.value || []).join(", ");
-    $("#setting-extra-cookies").value = extra.value ? JSON.stringify(extra.value, null, 2) : "";
   } catch (e) {
     /* fine on first load */
   }
@@ -655,21 +653,10 @@ $("#save-osm-settings").addEventListener("click", async () => {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  let extra = {};
-  const extraRaw = $("#setting-extra-cookies").value.trim();
-  if (extraRaw) {
-    try {
-      extra = JSON.parse(extraRaw);
-    } catch {
-      toast("Extra cookies must be valid JSON", "error");
-      return;
-    }
-  }
   try {
-    await apiFetch("/settings/osm_phpsessid", { method: "PUT", body: JSON.stringify({ value: $("#setting-phpsessid").value.trim() }) });
+    await apiFetch("/settings/osm_cookie_header", { method: "PUT", body: JSON.stringify({ value: $("#setting-cookie-header").value.trim() }) });
     await apiFetch("/settings/osm_section_ids", { method: "PUT", body: JSON.stringify({ value: sectionIds }) });
     await apiFetch("/settings/osm_name_filter", { method: "PUT", body: JSON.stringify({ value: nameFilter }) });
-    await apiFetch("/settings/osm_extra_cookies", { method: "PUT", body: JSON.stringify({ value: extra }) });
     toast("Saved", "success");
   } catch (e) {
     toast(e.message, "error");
