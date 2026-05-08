@@ -4,3 +4,16 @@ node_modules/
 .idea/
 .claude/
 *.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+
+# Local app data
+desktop/tracker.db
+desktop/tracker.db-journal
+.env
