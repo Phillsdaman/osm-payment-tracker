@@ -136,7 +136,7 @@ def seed_if_empty() -> None:
             ("Leo Owens", "child", None, 1),
             ("Max Owens", "child", None, 1),
             ("Lisa Clarke", "child", None, 1),
-            ("Aaron Clarke", "child", None, 0),
+            ("Aaron Clarke", "child", None, 1),  # manual bank-transfer payments
         ]
         ts = now_iso()
         for name, role, email, track in seed:
