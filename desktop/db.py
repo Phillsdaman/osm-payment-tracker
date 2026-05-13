@@ -117,6 +117,7 @@ def connect():
 
 
 def init_db() -> None:
+    backup_db()
     with connect() as c:
         c.executescript(SCHEMA)
         # Lightweight migrations for existing databases
@@ -126,6 +127,36 @@ def init_db() -> None:
         if "osm_member_id" not in cols:
             c.execute("ALTER TABLE members ADD COLUMN osm_member_id TEXT")
     seed_if_empty()
+
+
+def backup_db(keep: int = 20) -> Path | None:
+    """Copy tracker.db to backups/tracker_YYYYMMDD_HHMMSS.db on each app start.
+
+    Rotates so the newest `keep` files are retained. Returns the new backup
+    path, or None if there's nothing to back up yet.
+    """
+    import shutil
+    from datetime import datetime
+
+    if not DB_PATH.exists():
+        return None
+    backup_dir = DB_PATH.parent / "backups"
+    backup_dir.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = backup_dir / f"tracker_{ts}.db"
+    try:
+        shutil.copy2(DB_PATH, target)
+    except OSError:
+        # Don't let a backup failure block app launch.
+        return None
+    # Keep only newest N
+    backups = sorted(backup_dir.glob("tracker_*.db"))
+    for old in backups[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return target
 
 
 def seed_if_empty() -> None:

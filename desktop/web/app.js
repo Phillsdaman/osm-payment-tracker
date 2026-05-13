@@ -698,7 +698,16 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-// ───── export / import ─────
+// ───── backup / export / import ─────
+$("#backup-btn").addEventListener("click", async () => {
+  try {
+    const r = await apiFetch("/backup", { method: "POST" });
+    toast(r.message + (r.path ? ` (${r.path.split(/[\\/]/).pop()})` : ""), "success");
+  } catch (e) {
+    toast("Backup failed: " + e.message, "error");
+  }
+});
+
 $("#export-btn").addEventListener("click", async () => {
   const data = await apiFetch("/export");
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
