@@ -321,6 +321,54 @@ def delete_activity(aid: str, cascade_payments: bool = True) -> None:
         c.execute("DELETE FROM activities WHERE id=?", (aid,))
 
 
+def upsert_activity_from_osm(osm_event: dict, *, attendee_member_id: str | None) -> dict:
+    """Upsert an activity sourced from OSM, by osm_id (event_id).
+
+    Preserves user-set fields (notes) — only overwrites OSM-managed fields
+    (name, dates, location, cost). If attendee_member_id is supplied, adds
+    that member to the attendee list (idempotent — won't duplicate, and
+    won't remove other manually-added attendees).
+    """
+    ts = now_iso()
+    osm_id = str(osm_event["event_id"])
+    name = (osm_event.get("name") or "").strip() or "Untitled OSM event"
+    start_date = osm_event.get("startdate") or None
+    end_date = osm_event.get("enddate") or start_date
+    location = osm_event.get("location")
+    cost = osm_event.get("cost")
+    if cost is not None:
+        try:
+            cost = float(cost)
+            if cost < 0:
+                cost = None  # OSM uses -1 for "TBC"
+        except (TypeError, ValueError):
+            cost = None
+    with connect() as c:
+        existing = c.execute(
+            "SELECT id FROM activities WHERE osm_id=?", (osm_id,)
+        ).fetchone()
+        if existing:
+            aid = existing["id"]
+            c.execute(
+                "UPDATE activities SET name=?, start_date=?, end_date=?, location=?, cost=?, "
+                "source='osm', updated_at=? WHERE id=?",
+                (name, start_date, end_date, location, cost, ts, aid),
+            )
+        else:
+            aid = new_id()
+            c.execute(
+                "INSERT INTO activities (id,name,start_date,end_date,location,cost,source,osm_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (aid, name, start_date, end_date, location, cost, "osm", osm_id, ts, ts),
+            )
+        if attendee_member_id:
+            c.execute(
+                "INSERT OR IGNORE INTO activity_attendees (activity_id, member_id) VALUES (?, ?)",
+                (aid, attendee_member_id),
+            )
+        return list_one_activity(aid, c)
+
+
 # ───────── Payments ─────────
 
 def list_payments() -> list[dict]:

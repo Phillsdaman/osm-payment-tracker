@@ -702,9 +702,11 @@ $("#sync-btn").addEventListener("click", async () => {
     const result = await runOsmSync();
     if (result) {
       const ts = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      $("#last-sync").textContent = `Last sync: ${ts} · ${result.members_synced} member(s)`;
+      const created = result.activities_created || 0;
+      const updated = result.activities_updated || 0;
+      $("#last-sync").textContent = `Last sync: ${ts} · ${result.members_synced} member(s), ${created} new + ${updated} updated activities`;
       $("#last-sync").classList.remove("hidden");
-      toast(`OSM sync OK — ${result.members_synced} member(s) fetched`, "success");
+      toast(`OSM sync OK — ${created} new + ${updated} updated activities`, "success");
       await refreshAll();
     }
   } catch (e) {
