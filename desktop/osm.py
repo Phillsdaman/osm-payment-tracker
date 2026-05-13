@@ -138,19 +138,40 @@ class OSMClient:
     def get_member_payments(self, section_id: str | int, member_id: str | int) -> Any:
         """GET /ext/mymember/payments/?action=getDetails
 
-        Returns the full payment details for one member in one section
-        (parent-portal view — what you see for your own kids).
-        Response shape varies; we return the raw JSON.
+        Returns the list of payment schedules a member is on (parent-portal view).
+        Each entry typically has a schedule_id we can drill into with
+        get_payment_schedule().
         """
         return self._get(
             "/ext/mymember/payments/",
             {"action": "getDetails", "section_id": section_id, "member_id": member_id},
         )
 
+    def get_payment_schedule(
+        self,
+        section_id: str | int,
+        member_id: str | int,
+        schedule_id: str | int,
+    ) -> Any:
+        """GET /ext/mymember/payments/?action=getSchedule
+
+        Drills into one specific payment schedule for line-item detail:
+        instalments, amounts, due dates, paid status.
+        """
+        return self._get(
+            "/ext/mymember/payments/",
+            {
+                "action": "getSchedule",
+                "section_id": section_id,
+                "member_id": member_id,
+                "schedule_id": schedule_id,
+            },
+        )
+
     def get_member_events(self, section_id: str | int, member_id: str | int) -> Any:
         """GET /ext/mymember/events/?action=getDetails
 
-        Returns events/activities the member is signed up for.
+        Returns events/camps the member is signed up for.
         """
         return self._get(
             "/ext/mymember/events/",
