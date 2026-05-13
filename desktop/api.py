@@ -207,10 +207,44 @@ class Handler(BaseHTTPRequestHandler):
                 results = osm.fetch_for_members(client, members)
             except osm.OSMAuthError as e:
                 return _json_response(self, 401, {"error": str(e)})
+
+            # Upsert events → activities + attendee links
+            activities_created = 0
+            activities_updated = 0
+            for local_member_id, entry in results.items():
+                events_payload = entry.get("events") or {}
+                events_data = events_payload.get("data") if isinstance(events_payload, dict) else None
+                if not isinstance(events_data, list):
+                    continue
+                for raw_event in events_data:
+                    if not isinstance(raw_event, dict) or not raw_event.get("event_id"):
+                        continue
+                    norm = osm.normalize_event(raw_event)
+                    is_attending = (raw_event.get("attending") == "yes")
+                    # Check if it existed before for stats
+                    existing = next(
+                        (a for a in db.list_activities() if a.get("osm_id") == str(norm["event_id"])),
+                        None,
+                    )
+                    db.upsert_activity_from_osm(
+                        norm,
+                        attendee_member_id=local_member_id if is_attending else None,
+                    )
+                    if existing:
+                        activities_updated += 1
+                    else:
+                        activities_created += 1
+
             return _json_response(
                 self,
                 200,
-                {"ok": True, "members_synced": len(results), "results": results},
+                {
+                    "ok": True,
+                    "members_synced": len(results),
+                    "activities_created": activities_created,
+                    "activities_updated": activities_updated,
+                    "results": results,
+                },
             )
 
         return self.send_error(404)

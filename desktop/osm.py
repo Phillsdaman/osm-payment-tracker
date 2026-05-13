@@ -5,6 +5,7 @@ Designed so that swapping to OAuth later only changes the auth class.
 
 Discovered endpoints (parent portal — what you see when logged in as a parent):
     GET  /ext/mymember/payments/?action=getDetails&section_id=X&member_id=Y
+    GET  /ext/mymember/payments/?action=getSchedule&section_id=X&member_id=Y&schedule_id=Z
     GET  /ext/mymember/events/?action=getDetails&section_id=X&member_id=Y
     GET  /ext/mymember/?action=track
     GET  /ext/users/auth/?action=ping&user_id=X
@@ -13,10 +14,10 @@ Each request needs cookies copied from a logged-in browser session.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlencode
 
 import requests
 
@@ -193,10 +194,16 @@ def fetch_for_members(
     members: list[dict],
 ) -> dict[str, dict]:
     """For each member with osm_section_id + osm_member_id set, fetch payments
-    and events. Returns dict keyed by local member id with raw OSM responses.
+    (with per-scheme drill-down) and events.
 
-    Errors per-member are caught and reported in the output, so one bad member
-    doesn't blow up the whole sync.
+    Returns dict keyed by local member id. Each value has:
+      - member_name, section_id, member_id (echo)
+      - events: { status, data: [event...] }      — list of camps/events
+      - payments: { status, data: { payments: [scheme...] } }  — scheme headers
+      - schedules: { scheme_id: { ...details... } }            — drill-down per scheme
+
+    Errors per-member or per-scheme are caught and surfaced in the output so
+    one bad call doesn't blow up the whole sync.
     """
     out: dict[str, dict] = {}
     for m in members:
@@ -204,14 +211,74 @@ def fetch_for_members(
         mid = m.get("osm_member_id")
         if not sid or not mid:
             continue
-        entry: dict[str, Any] = {"member_name": m.get("name"), "section_id": sid, "member_id": mid}
-        try:
-            entry["payments"] = client.get_member_payments(sid, mid)
-        except (OSMAuthError, OSMRequestError) as e:
-            entry["payments_error"] = str(e)
+        entry: dict[str, Any] = {
+            "member_name": m.get("name"),
+            "section_id": sid,
+            "member_id": mid,
+        }
+        # Events
         try:
             entry["events"] = client.get_member_events(sid, mid)
         except (OSMAuthError, OSMRequestError) as e:
             entry["events_error"] = str(e)
+        # Payment schemes (headers)
+        try:
+            payments_response = client.get_member_payments(sid, mid)
+            entry["payments"] = payments_response
+            # Drill into each scheme
+            schemes = []
+            if isinstance(payments_response, dict):
+                data = payments_response.get("data") or {}
+                if isinstance(data, dict):
+                    schemes = data.get("payments") or []
+            entry["schedules"] = {}
+            for scheme in schemes:
+                if not isinstance(scheme, dict):
+                    continue
+                scheme_id = scheme.get("scheme_id") or scheme.get("schedule_id")
+                if not scheme_id:
+                    continue
+                try:
+                    entry["schedules"][str(scheme_id)] = client.get_payment_schedule(sid, mid, scheme_id)
+                except (OSMAuthError, OSMRequestError) as e:
+                    entry["schedules"][str(scheme_id)] = {"error": str(e)}
+        except (OSMAuthError, OSMRequestError) as e:
+            entry["payments_error"] = str(e)
         out[m["id"]] = entry
     return out
+
+
+# ───────── Event parsing helpers ─────────
+
+def parse_event_extra(extra: Any) -> dict:
+    """The 'extra' field on events is a JSON string with nested config.
+    Returns the parsed dict or {} on any failure."""
+    if not extra or not isinstance(extra, str):
+        return {}
+    try:
+        return json.loads(extra)
+    except (ValueError, TypeError):
+        return {}
+
+
+def normalize_event(raw: dict) -> dict:
+    """Flatten an OSM event into the shape db.upsert_activity_from_osm expects.
+
+    Pulls location out of the nested 'extra.sharing.template.location' field.
+    Cost prefers numeric cost_raw if positive, else None (TBC).
+    """
+    extra = parse_event_extra(raw.get("extra"))
+    template = (extra.get("sharing") or {}).get("template") or {}
+    location = template.get("location")
+    cost_raw = raw.get("cost_raw")
+    cost = None
+    if isinstance(cost_raw, (int, float)) and cost_raw > 0:
+        cost = float(cost_raw)
+    return {
+        "event_id": raw.get("event_id"),
+        "name": raw.get("name"),
+        "startdate": raw.get("startdate"),
+        "enddate": raw.get("enddate") or raw.get("startdate"),
+        "location": location,
+        "cost": cost,
+    }
