@@ -217,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             except osm.OSMAuthError as e:
                 return _json_response(self, 401, {"error": str(e)})
 
+            members_by_id = {m["id"]: m for m in members}
+
             # Upsert events → activities + attendee links
             activities_created = 0
             activities_updated = 0
@@ -230,7 +232,6 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     norm = osm.normalize_event(raw_event)
                     is_attending = (raw_event.get("attending") == "yes")
-                    # Check if it existed before for stats
                     existing = next(
                         (a for a in db.list_activities() if a.get("osm_id") == str(norm["event_id"])),
                         None,
@@ -244,6 +245,29 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         activities_created += 1
 
+            # Upsert payment schedules → payment rows
+            payments_created = 0
+            payments_updated = 0
+            for local_member_id, entry in results.items():
+                member = members_by_id.get(local_member_id)
+                if not member or not member.get("track_payments"):
+                    continue  # leaders / opted-out members
+                schedules = entry.get("schedules") or {}
+                for _scheme_id, scheme_response in schedules.items():
+                    if not isinstance(scheme_response, dict):
+                        continue
+                    scheme_data = scheme_response.get("data") or {}
+                    scheme = scheme_data.get("scheme") or {}
+                    osm_payments = scheme_data.get("payments") or []
+                    for osm_payment in osm_payments:
+                        if not isinstance(osm_payment, dict) or not osm_payment.get("payment_id"):
+                            continue
+                        _, was_new = db.upsert_payment_from_osm(local_member_id, scheme, osm_payment)
+                        if was_new:
+                            payments_created += 1
+                        else:
+                            payments_updated += 1
+
             return _json_response(
                 self,
                 200,
@@ -252,6 +276,8 @@ class Handler(BaseHTTPRequestHandler):
                     "members_synced": len(results),
                     "activities_created": activities_created,
                     "activities_updated": activities_updated,
+                    "payments_created": payments_created,
+                    "payments_updated": payments_updated,
                     "results": results,
                 },
             )

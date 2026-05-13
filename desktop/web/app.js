@@ -799,11 +799,13 @@ $("#sync-btn").addEventListener("click", async () => {
     const result = await runOsmSync();
     if (result) {
       const ts = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      const created = result.activities_created || 0;
-      const updated = result.activities_updated || 0;
-      $("#last-sync").textContent = `Last sync: ${ts} · ${result.members_synced} member(s), ${created} new + ${updated} updated activities`;
+      const aNew = result.activities_created || 0;
+      const aUpd = result.activities_updated || 0;
+      const pNew = result.payments_created || 0;
+      const pUpd = result.payments_updated || 0;
+      $("#last-sync").textContent = `Last sync: ${ts} · ${result.members_synced} member(s) · ${aNew + aUpd} activities · ${pNew + pUpd} payments`;
       $("#last-sync").classList.remove("hidden");
-      toast(`OSM sync OK — ${created} new + ${updated} updated activities`, "success");
+      toast(`Sync OK: ${aNew} new + ${aUpd} updated activities, ${pNew} new + ${pUpd} updated payments`, "success");
       await refreshAll();
     }
   } catch (e) {

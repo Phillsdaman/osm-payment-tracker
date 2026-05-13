@@ -478,6 +478,101 @@ def delete_payment(pid: str) -> None:
         c.execute("DELETE FROM payments WHERE id=?", (pid,))
 
 
+# OSM payment statuses → local status mapping
+_OSM_PAID_STATUSES = {"received", "paid-manually"}
+
+
+def upsert_payment_from_osm(
+    local_member_id: str,
+    scheme: dict,
+    payment: dict,
+) -> tuple[dict, bool]:
+    """Upsert one OSM payment line item against a local member.
+
+    Uses a composite osm_id of '{local_member_id}:{payment_id}' so siblings
+    sharing the same OSM payment_id each get their own row.
+
+    Status mapping:
+      'received'              → paid  (DD collected)
+      'paid-manually'         → paid  (admin marked off)
+      'direct-debit-active'   → unpaid (DD scheduled but not collected)
+      anything else           → unpaid
+
+    Preserves any user-set notes on existing rows. Returns (payment, was_new).
+    """
+    ts = now_iso()
+    osm_payment_id = str(payment.get("payment_id"))
+    composite_osm_id = f"{local_member_id}:{osm_payment_id}"
+    try:
+        amount = float(payment.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    osm_status = (payment.get("status") or "").lower()
+    is_paid = osm_status in _OSM_PAID_STATUSES
+    amount_paid = amount if is_paid else 0.0
+    local_status = "paid" if is_paid else "unpaid"
+
+    paid_date = None
+    if is_paid:
+        last_updated = payment.get("last_updated")
+        if isinstance(last_updated, str) and last_updated:
+            paid_date = last_updated.split(" ")[0]
+
+    method = "OSM (Manual)" if osm_status == "paid-manually" else "OSM (Direct Debit)"
+    reference = (payment.get("name") or scheme.get("name") or "OSM payment").strip()
+
+    with connect() as c:
+        existing = c.execute(
+            "SELECT id FROM payments WHERE osm_id=?", (composite_osm_id,)
+        ).fetchone()
+        if existing:
+            pid = existing["id"]
+            # Preserve user notes; update everything else
+            c.execute(
+                "UPDATE payments SET member_id=?, amount_due=?, amount_paid=?, status=?, "
+                "due_date=?, paid_date=?, method=?, reference=?, source='osm', updated_at=? WHERE id=?",
+                (
+                    local_member_id,
+                    amount,
+                    amount_paid,
+                    local_status,
+                    payment.get("due_date"),
+                    paid_date,
+                    method,
+                    reference,
+                    ts,
+                    pid,
+                ),
+            )
+            was_new = False
+        else:
+            pid = new_id()
+            c.execute(
+                "INSERT INTO payments (id,member_id,activity_id,amount_due,amount_paid,status,"
+                "due_date,paid_date,method,reference,source,osm_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    pid,
+                    local_member_id,
+                    None,
+                    amount,
+                    amount_paid,
+                    local_status,
+                    payment.get("due_date"),
+                    paid_date,
+                    method,
+                    reference,
+                    "osm",
+                    composite_osm_id,
+                    ts,
+                    ts,
+                ),
+            )
+            was_new = True
+        r = c.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone()
+        return dict(r), was_new
+
+
 # ───────── Settings ─────────
 
 def get_setting(key: str, default: Any = None) -> Any:
