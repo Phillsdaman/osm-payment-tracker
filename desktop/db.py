@@ -16,7 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).parent / "tracker.db"
+import os
+
+# Allow overriding via env var so tests/smoke runs can't clobber the real DB.
+_DEFAULT_DB = Path(__file__).parent / "tracker.db"
+DB_PATH = Path(os.environ.get("OSM_TRACKER_DB", str(_DEFAULT_DB)))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS members (
