@@ -146,7 +146,86 @@ function renderDashboard() {
         })
         .join("")
     : '<div class="text-slate-400 italic text-sm">All caught up. 🎉</div>';
+
+  renderSpendingPerChild();
 }
+
+// ───── spending per child (Dashboard widget) ─────
+function renderSpendingPerChild() {
+  const yearSelect = $("#spending-year");
+  if (!yearSelect) return;
+  // Build year options from payments + the current year (always offered)
+  const years = new Set([new Date().getFullYear()]);
+  state.payments.forEach((p) => {
+    if (p.paid_date) years.add(new Date(p.paid_date).getFullYear());
+    if (p.due_date) years.add(new Date(p.due_date).getFullYear());
+  });
+  const sortedYears = [...years].sort((a, b) => b - a);
+  const currentSelection = yearSelect.value ? Number(yearSelect.value) : new Date().getFullYear();
+  yearSelect.innerHTML =
+    '<option value="all">All time</option>' +
+    sortedYears.map((y) => `<option value="${y}" ${y === currentSelection ? "selected" : ""}>${y}</option>`).join("");
+
+  const filter = yearSelect.value;
+  const inYear = (p) => {
+    if (filter === "all" || !filter) return true;
+    if (!p.paid_date) return false;
+    return new Date(p.paid_date).getFullYear() === Number(filter);
+  };
+
+  // Aggregate per member with track_payments=true
+  const rows = state.members
+    .filter((m) => m.track_payments)
+    .map((m) => {
+      const memberPayments = state.payments.filter((p) => p.member_id === m.id && inYear(p));
+      const paid = memberPayments.reduce((s, p) => s + (Number(p.amount_paid) || 0), 0);
+      const due = memberPayments.reduce((s, p) => s + (Number(p.amount_due) || 0), 0);
+      const outstanding = Math.max(0, due - paid);
+      const count = memberPayments.filter((p) => Number(p.amount_paid) > 0).length;
+      return { name: m.name, paid, due, outstanding, count };
+    })
+    .sort((a, b) => b.paid - a.paid);
+
+  const grandPaid = rows.reduce((s, r) => s + r.paid, 0);
+  const grandOutstanding = rows.reduce((s, r) => s + r.outstanding, 0);
+
+  $("#dashboard-spending").innerHTML = `
+    <table class="w-full">
+      <thead class="text-xs text-slate-500 uppercase">
+        <tr>
+          <th class="text-left py-1">Child</th>
+          <th class="text-right py-1">Payments</th>
+          <th class="text-right py-1">Spent</th>
+          <th class="text-right py-1">Outstanding</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows
+          .map(
+            (r) => `<tr class="border-t border-slate-100">
+              <td class="py-1.5">${escapeHtml(r.name)}</td>
+              <td class="py-1.5 text-right text-slate-500">${r.count}</td>
+              <td class="py-1.5 text-right font-medium">${fmtMoney(r.paid)}</td>
+              <td class="py-1.5 text-right ${r.outstanding > 0 ? "text-red-600" : "text-slate-400"}">${fmtMoney(r.outstanding)}</td>
+            </tr>`
+          )
+          .join("")}
+      </tbody>
+      <tfoot class="border-t-2 border-slate-200 font-semibold">
+        <tr>
+          <td class="py-1.5">Total</td>
+          <td></td>
+          <td class="py-1.5 text-right">${fmtMoney(grandPaid)}</td>
+          <td class="py-1.5 text-right ${grandOutstanding > 0 ? "text-red-600" : "text-slate-400"}">${fmtMoney(grandOutstanding)}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+// Re-render when user changes the year selector
+document.addEventListener("change", (e) => {
+  if (e.target.id === "spending-year") renderSpendingPerChild();
+});
 
 // ───── activities ─────
 function renderActivities() {
@@ -200,6 +279,15 @@ function renderPayments() {
   if (statusFilter) rows = rows.filter((p) => p.status === statusFilter);
   if (memberSel) rows = rows.filter((p) => p.member_id === memberSel);
   rows.sort((a, b) => (a.due_date || "").localeCompare(b.due_date || ""));
+
+  // Update totals row from the filtered set
+  const totalDue = rows.reduce((s, p) => s + (Number(p.amount_due) || 0), 0);
+  const totalPaid = rows.reduce((s, p) => s + (Number(p.amount_paid) || 0), 0);
+  const totalOutstanding = Math.max(0, totalDue - totalPaid);
+  $("#payments-totals-count").textContent = `${rows.length} payment${rows.length === 1 ? "" : "s"}`;
+  $("#payments-totals-due").textContent = fmtMoney(totalDue);
+  $("#payments-totals-paid").textContent = fmtMoney(totalPaid);
+  $("#payments-totals-outstanding").textContent = totalOutstanding > 0 ? `${fmtMoney(totalOutstanding)} outstanding` : "";
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="px-3 py-8 text-center text-slate-400 italic">No payments match.</td></tr>';
