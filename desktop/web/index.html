@@ -76,6 +76,17 @@
           <div id="dashboard-outstanding" class="space-y-2 text-sm"></div>
         </div>
       </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold mb-3 flex items-center justify-between flex-wrap gap-2">
+          <span>Spending per child</span>
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-slate-500">Year</label>
+            <select id="spending-year" class="border border-slate-300 rounded-lg px-2 py-1 text-sm"></select>
+          </div>
+        </h2>
+        <div id="dashboard-spending" class="text-sm"></div>
+      </div>
     </section>
 
     <!-- Activities -->
@@ -118,6 +129,14 @@
             </tr>
           </thead>
           <tbody id="payments-tbody"></tbody>
+          <tfoot class="bg-slate-50 border-t border-slate-200 text-xs font-semibold">
+            <tr>
+              <td class="px-3 py-2" colspan="2"><span id="payments-totals-count" class="text-slate-500"></span></td>
+              <td class="px-3 py-2 text-right"><span id="payments-totals-due">£0.00</span></td>
+              <td class="px-3 py-2 text-right"><span id="payments-totals-paid">£0.00</span></td>
+              <td class="px-3 py-2" colspan="3"><span id="payments-totals-outstanding" class="text-red-600"></span></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </section>
