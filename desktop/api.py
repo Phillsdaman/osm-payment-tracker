@@ -155,6 +155,15 @@ class Handler(BaseHTTPRequestHandler):
             db.delete_payment(m.group(1))
             return _json_response(self, 200, {"ok": True})
 
+        # /api/backup
+        if path == "/api/backup" and method == "POST":
+            target = db.backup_db()
+            return _json_response(
+                self,
+                200,
+                {"ok": True, "path": str(target) if target else None, "message": "Backup saved" if target else "Nothing to back up"},
+            )
+
         # /api/export & /api/import
         if path == "/api/export" and method == "GET":
             return _json_response(self, 200, db.export_all())
